@@ -1,0 +1,94 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Frontend stack - AWS Amplify for Next.js application'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Description: Name of the project
+
+  HostedZoneId:
+    Type: String
+    Description: Route53 Hosted Zone ID
+
+  FrontendDomain:
+    Type: String
+    Description: Subdomain for frontend
+
+  BackendDomain:
+    Type: String
+    Description: Subdomain for backend API
+
+  BaseDomain:
+    Type: String
+    Description: Base domain name
+
+Resources:
+  AmplifyApp:
+    Type: AWS::Amplify::App
+    Properties:
+      Name: !Sub '${ProjectName}-frontend'
+      # Note: Repository and OAuth token should be configured manually in AWS Amplify Console
+      # or via AWS CLI after initial deployment
+      BuildSpec: |
+        version: 1
+        frontend:
+          phases:
+            preBuild:
+              commands:
+                - npm ci
+            build:
+              commands:
+                - npm run build
+          artifacts:
+            baseDirectory: .next
+            files:
+              - '**/*'
+          cache:
+            paths:
+              - node_modules/**/*
+      CustomRules:
+        - Source: '/<*>'
+          Target: '/index.html'
+          Status: '200'
+      EnvironmentVariables:
+        - Name: NEXT_PUBLIC_API_URL
+          Value: !Sub 'https://${BackendDomain}.${BaseDomain}'
+
+  AmplifyBranch:
+    Type: AWS::Amplify::Branch
+    Properties:
+      AppId: !GetAtt AmplifyApp.AppId
+      BranchName: main
+      EnableAutoBuild: true
+
+  AmplifyDomain:
+    Type: AWS::Amplify::Domain
+    Properties:
+      AppId: !GetAtt AmplifyApp.AppId
+      DomainName: !Sub '${FrontendDomain}.${BaseDomain}'
+      SubDomainSettings:
+        - Branch: !Ref AmplifyBranch
+          Prefix: !Sub '${FrontendDomain}'
+
+  Route53Record:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Sub '${FrontendDomain}.${BaseDomain}'
+      Type: CNAME
+      TTL: 300
+      ResourceRecords:
+        - !GetAtt AmplifyDomain.DomainName
+
+Outputs:
+  FrontendURL:
+    Description: Frontend application URL
+    Value: !Sub 'https://${FrontendDomain}.${BaseDomain}'
+    Export:
+      Name: !Sub '${ProjectName}-FrontendURL'
+
+  AmplifyAppId:
+    Description: Amplify App ID
+    Value: !GetAtt AmplifyApp.AppId
+    Export:
+      Name: !Sub '${ProjectName}-AmplifyAppId'

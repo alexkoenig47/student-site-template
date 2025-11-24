@@ -1,0 +1,111 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Main stack for student site template - orchestrates frontend and backend stacks'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: student-site
+    Description: Name of the project
+
+  HostedZoneId:
+    Type: String
+    Description: Route53 Hosted Zone ID for custom domain
+
+  FrontendDomain:
+    Type: String
+    Default: www
+    Description: Subdomain for frontend (www or @)
+
+  BackendDomain:
+    Type: String
+    Default: api
+    Description: Subdomain for backend API
+
+  BaseDomain:
+    Type: String
+    Description: Base domain name (e.g., example.com)
+
+  GitHubActionsRoleArn:
+    Type: String
+    Description: ARN of the GitHub Actions IAM role
+
+Resources:
+  ArtifactsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${ProjectName}-artifacts-${AWS::AccountId}'
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  ECRRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub '${ProjectName}-backend'
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep last 10 images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 10
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }
+
+  FrontendStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub 'https://${ArtifactsBucket}.s3.${AWS::Region}.amazonaws.com/frontend-stack.yml'
+      Parameters:
+        ProjectName: !Ref ProjectName
+        HostedZoneId: !Ref HostedZoneId
+        FrontendDomain: !Ref FrontendDomain
+        BackendDomain: !Ref BackendDomain
+        BaseDomain: !Ref BaseDomain
+
+  BackendStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub 'https://${ArtifactsBucket}.s3.${AWS::Region}.amazonaws.com/backend-stack.yml'
+      Parameters:
+        ProjectName: !Ref ProjectName
+        HostedZoneId: !Ref HostedZoneId
+        BackendDomain: !Ref BackendDomain
+        BaseDomain: !Ref BaseDomain
+        ECRRepositoryUri: !GetAtt ECRRepository.RepositoryUri
+
+Outputs:
+  ArtifactsBucketName:
+    Description: Name of the artifacts S3 bucket
+    Value: !Ref ArtifactsBucket
+    Export:
+      Name: !Sub '${ProjectName}-ArtifactsBucket'
+
+  ECRRepositoryUri:
+    Description: URI of the ECR repository
+    Value: !GetAtt ECRRepository.RepositoryUri
+    Export:
+      Name: !Sub '${ProjectName}-ECRRepositoryUri'
+
+  FrontendURL:
+    Description: Frontend application URL
+    Value: !GetAtt FrontendStack.Outputs.FrontendURL
+
+  BackendURL:
+    Description: Backend API URL
+    Value: !GetAtt BackendStack.Outputs.BackendURL
