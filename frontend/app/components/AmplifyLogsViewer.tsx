@@ -69,13 +69,13 @@ export default function AmplifyLogsViewer() {
             value={appId}
             onChange={(e) => setAppId(e.target.value)}
             onKeyPress={(e) => e.key === "Enter" && fetchInfo()}
-            className="flex-1 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+            className="flex-1 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-brand-purple focus:border-brand-purple"
             placeholder="d1234567890abc (found in AWS Amplify Console)"
           />
           <button
             onClick={fetchInfo}
             disabled={loading || !appId.trim()}
-            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="px-4 py-2 bg-brand-purple text-white rounded-md hover:bg-[#3a1766] disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {loading ? "Loading..." : "Get Info"}
           </button>
@@ -96,9 +96,9 @@ export default function AmplifyLogsViewer() {
       {/* Info Display */}
       {info && (
         <div className="space-y-4">
-          <div className="p-4 bg-blue-50 border border-blue-200 rounded-md">
-            <p className="text-sm text-blue-800 mb-2">{info.message}</p>
-            <p className="text-xs text-blue-700">
+          <div className="p-4 bg-brand-purple/5 border border-brand-purple/20 rounded-md">
+            <p className="text-sm text-foreground mb-2">{info.message}</p>
+            <p className="text-xs text-zinc-700 dark:text-zinc-300">
               <strong>App ID:</strong> {info.app_id}
             </p>
           </div>
@@ -137,8 +137,8 @@ export default function AmplifyLogsViewer() {
             </a>
           </div>
 
-          <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-md">
-            <p className="text-xs text-yellow-800">
+          <div className="p-3 bg-brand-gold/15 border border-brand-gold/40 rounded-md">
+            <p className="text-xs text-zinc-900">
               <strong>Note:</strong> {info.note}
             </p>
           </div>

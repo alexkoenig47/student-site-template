@@ -117,7 +117,7 @@ export default function CloudWatchLogsViewer() {
               type="text"
               value={logGroup}
               onChange={(e) => setLogGroup(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-brand-purple focus:border-brand-purple"
               placeholder="/ecs/your-project-name"
             />
           </div>
@@ -125,7 +125,7 @@ export default function CloudWatchLogsViewer() {
             <button
               onClick={() => fetchLogs()}
               disabled={loading}
-              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-4 py-2 bg-brand-purple text-white rounded-md hover:bg-[#3a1766] disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {loading ? "Loading..." : "Refresh"}
             </button>
@@ -138,7 +138,7 @@ export default function CloudWatchLogsViewer() {
               type="checkbox"
               checked={autoRefresh}
               onChange={(e) => setAutoRefresh(e.target.checked)}
-              className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              className="rounded border-gray-300 text-brand-purple focus:ring-brand-purple"
             />
             <span className="text-gray-700">Auto-refresh</span>
           </label>
@@ -181,7 +181,7 @@ export default function CloudWatchLogsViewer() {
                 {new Date(log.timestamp).toLocaleString()}
               </span>
               {log.log_stream && (
-                <span className="text-blue-400 text-xs truncate max-w-[200px]">
+                <span className="text-brand-gold text-xs truncate max-w-[200px]">
                   {log.log_stream}
                 </span>
               )}
@@ -209,8 +209,8 @@ export default function CloudWatchLogsViewer() {
       )}
 
       {/* Info */}
-      <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-md">
-        <p className="text-sm text-blue-800">
+      <div className="mt-4 p-3 bg-brand-gold/15 border border-brand-gold/40 rounded-md">
+        <p className="text-sm text-zinc-900">
           <strong>Tip:</strong> Make sure your ECS task role has CloudWatch Logs read permissions.
           The log group name should match the one configured in your CloudFormation stack.
         </p>
