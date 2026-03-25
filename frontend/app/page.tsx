@@ -12,7 +12,9 @@ export default function Home() {
 
         <div className="relative space-y-5">
           <div className="flex flex-wrap items-center gap-3">
-            <span className="lsu-badge">Louisiana State University</span>
+            <span className="rounded-full border border-brand-gold/40 bg-white/10 px-3 py-1 text-xs font-semibold text-white/90">
+              Louisiana State University
+            </span>
             <span className="rounded-full border border-brand-gold/40 bg-white/10 px-3 py-1 text-xs font-semibold text-white/90">
               {student.location}
             </span>
@@ -31,7 +33,7 @@ export default function Home() {
           </p>
 
           <div className="flex flex-wrap items-center gap-3 pt-1">
-            <a className="lsu-btn-gold" href={`mailto:${student.email}`}>
+            <a className="lsu-btn-outline" href={`mailto:${student.email}`}>
               Email me
             </a>
             <Link className="lsu-btn-outline" href="/projects">

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import Link from "next/link";
 import "./globals.css";
+import { HeaderNav } from "./components/HeaderNav";
 import { student } from "./lib/siteContent";
 
 const geistSans = Geist({
@@ -51,26 +52,7 @@ export default function RootLayout({
                   </div>
                 </Link>
 
-                <nav className="flex flex-wrap items-center gap-2 text-sm font-semibold">
-                  <Link
-                    href="/"
-                    className="rounded-full px-4 py-2 text-white/90 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-gold/70"
-                  >
-                    Home
-                  </Link>
-                  <Link
-                    href="/projects"
-                    className="rounded-full px-4 py-2 text-white/90 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-gold/70"
-                  >
-                    Projects
-                  </Link>
-                  <Link
-                    href="/blog"
-                    className="rounded-full bg-brand-gold px-4 py-2 text-brand-purple transition-colors hover:bg-[#f2c400] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
-                  >
-                    Blog
-                  </Link>
-                </nav>
+                <HeaderNav />
               </div>
 
               <div className="mt-6 hidden sm:block">
