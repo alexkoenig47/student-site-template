@@ -1,0 +1,80 @@
+# Deploys / updates the Amplify Hosting stack (CloudFormation).
+# Prerequisites:
+# 1) IAM role github-role (286103605609) trusts GitHub OIDC for this repo.
+# 2) GitHub repo secret AMPLIFY_GITHUB_TOKEN — PAT with repo + webhook access for Amplify.
+# 3) Optional: repo variable AWS_REGION (default us-east-1), AMPLIFY_STACK_NAME (default student-site-amplify).
+
+name: Deploy Amplify (CloudFormation)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Job-level permissions: required for OIDC (some orgs ignore workflow-level only).
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      STACK_NAME: ${{ vars.AMPLIFY_STACK_NAME || 'student-site-amplify' }}
+      GITHUB_OWNER: ${{ vars.GITHUB_OWNER || 'alexkoenig47' }}
+      GITHUB_REPO: ${{ vars.GITHUB_REPO || 'student-site-template' }}
+      GITHUB_BRANCH: ${{ vars.GITHUB_BRANCH || 'main' }}
+      AMPLIFY_APP_NAME: ${{ vars.AMPLIFY_APP_NAME || 'student-site-template' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # If this fails: repo/org is blocking OIDC (Workflow permissions) or job has no id-token: write.
+      - name: Check GitHub OIDC is available
+        run: |
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
+            echo "::error::GitHub did not inject OIDC env vars. Fix: repo Settings → Actions → General → Workflow permissions → Read and write; ensure this job has permissions.id-token: write; check org Actions policies."
+            exit 1
+          fi
+          echo "OIDC request URL is set (length ${#ACTIONS_ID_TOKEN_REQUEST_URL})."
+
+      # Region hardcoded here so repo vars cannot break credential config.
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::286103605609:role/github-role
+          aws-region: us-east-1
+          audience: sts.amazonaws.com
+          role-session-name: github-actions-amplify-${{ github.run_id }}
+
+      - name: Deploy CloudFormation stack
+        env:
+          GH_TOKEN: ${{ secrets.AMPLIFY_GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "Missing secret AMPLIFY_GITHUB_TOKEN. Add a GitHub PAT under Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+          aws cloudformation deploy \
+            --stack-name "${STACK_NAME}" \
+            --template-file infrastructure/amplify-app.yaml \
+            --capabilities CAPABILITY_IAM \
+            --region "${AWS_REGION}" \
+            --no-fail-on-empty-changeset \
+            --parameter-overrides \
+              "GitHubAccessToken=${GH_TOKEN}" \
+              "GitHubOwner=${GITHUB_OWNER}" \
+              "GitHubRepo=${GITHUB_REPO}" \
+              "GitHubBranch=${GITHUB_BRANCH}" \
+              "AppName=${AMPLIFY_APP_NAME}"
+
+      - name: Show stack outputs
+        run: |
+          aws cloudformation describe-stacks \
+            --stack-name "${STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs" \
+            --output table

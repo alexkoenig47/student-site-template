@@ -72,7 +72,7 @@ export const projects: Project[] = [
   {
     title: "Student portfolio (this site)",
     description:
-      "A Next.js portfolio with blog, projects, and LSU-inspired styling. Swap copy and add links as you ship more work.",
+      "A Next.js portfolio with posts, projects, and LSU-inspired styling. Swap copy and add links as you ship more work.",
     tags: ["Next.js", "TypeScript", "Tailwind CSS"],
   },
   {

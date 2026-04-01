@@ -20,7 +20,7 @@ export function HeaderNav() {
   const items = [
     { href: "/", label: "Home" },
     { href: "/projects", label: "Projects" },
-    { href: "/blog", label: "Blog" },
+    { href: "/blog", label: "Posts" },
   ] as const;
 
   return (

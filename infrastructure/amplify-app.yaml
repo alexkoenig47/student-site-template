@@ -1,0 +1,121 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Amplify Hosting app (Next.js SSR, Platform WEB_COMPUTE) connected to GitHub.
+  Deploy with GitHub Actions after storing a GitHub PAT in Secrets Manager or passing NoEcho parameter.
+
+Parameters:
+  GitHubOwner:
+    Type: String
+    Default: alexkoenig47
+    Description: GitHub organization or user name
+
+  GitHubRepo:
+    Type: String
+    Default: student-site-template
+    Description: Repository name (without owner)
+
+  GitHubBranch:
+    Type: String
+    Default: main
+    Description: Git branch Amplify builds and hosts
+
+  GitHubAccessToken:
+    Type: String
+    NoEcho: true
+    MinLength: 1
+    Description: >
+      GitHub personal access token (classic: repo scope) or fine-grained PAT with Contents read
+      and Webhooks for Amplify. Not stored by Amplify after connect.
+
+  AppName:
+    Type: String
+    Default: student-site-template
+    Description: Display name in Amplify console
+
+Resources:
+  AmplifyServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: amplify.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AdministratorAccess-Amplify
+
+  AmplifyComputeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AmplifySSRCompute
+            Effect: Allow
+            Principal:
+              Service: amplify.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: amplify-ssr-compute-minimal
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: CloudWatchLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogGroups
+                  - logs:DescribeLogStreams
+                Resource: "*"
+
+  AmplifyApp:
+    Type: AWS::Amplify::App
+    DependsOn:
+      - AmplifyServiceRole
+      - AmplifyComputeRole
+    Properties:
+      Name: !Ref AppName
+      Description: Next.js SSR (WEB_COMPUTE) — student portfolio
+      Platform: WEB_COMPUTE
+      Repository: !Sub "https://github.com/${GitHubOwner}/${GitHubRepo}"
+      AccessToken: !Ref GitHubAccessToken
+      IAMServiceRole: !GetAtt AmplifyServiceRole.Arn
+      ComputeRoleArn: !GetAtt AmplifyComputeRole.Arn
+      EnableBranchAutoDeletion: false
+      EnvironmentVariables:
+        - Name: AMPLIFY_MONOREPO_APP_ROOT
+          Value: frontend
+      Tags:
+        - Key: Project
+          Value: student-site-template
+
+  AmplifyBranch:
+    Type: AWS::Amplify::Branch
+    Properties:
+      AppId: !GetAtt AmplifyApp.AppId
+      BranchName: !Ref GitHubBranch
+      Description: Production branch
+      EnableAutoBuild: true
+      Stage: PRODUCTION
+      ComputeRoleArn: !GetAtt AmplifyComputeRole.Arn
+
+Outputs:
+  AppId:
+    Description: Amplify application ID
+    Value: !GetAtt AmplifyApp.AppId
+
+  AppArn:
+    Description: Amplify application ARN
+    Value: !GetAtt AmplifyApp.Arn
+
+  DefaultDomain:
+    Description: Default amplifyapp.com hostname (branch URL uses branch prefix)
+    Value: !GetAtt AmplifyApp.DefaultDomain
+
+  BranchUrl:
+    Description: Example URL for the deployed branch
+    Value: !Sub "https://${GitHubBranch}.${AmplifyApp.DefaultDomain}"

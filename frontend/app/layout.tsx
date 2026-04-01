@@ -79,7 +79,7 @@ export default function RootLayout({
                     Projects
                   </Link>
                   <Link className="lsu-link" href="/blog">
-                    Blog
+                    Posts
                   </Link>
                 </div>
               </div>

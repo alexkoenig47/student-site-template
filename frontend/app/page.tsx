@@ -40,7 +40,7 @@ export default function Home() {
               View projects
             </Link>
             <Link className="lsu-btn-outline" href="/blog">
-              Read the blog
+              Read posts
             </Link>
           </div>
         </div>
@@ -81,7 +81,7 @@ export default function Home() {
             <h2 id="featured-posts" className="text-lg font-semibold tracking-tight">
               Featured posts
             </h2>
-            <p className="mt-1 text-sm text-muted-2">A couple highlights from the blog.</p>
+            <p className="mt-1 text-sm text-muted-2">A couple highlights from recent posts.</p>
           </div>
           <Link className="lsu-link text-sm" href="/blog">
             View all →

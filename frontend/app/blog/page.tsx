@@ -9,7 +9,7 @@ export default function BlogIndexPage() {
         <div className="absolute -left-24 -bottom-24 h-64 w-64 rounded-full bg-brand-gold/20 blur-3xl" />
         <div className="relative space-y-3">
           <div className="flex flex-wrap items-center gap-3">
-            <span className="lsu-badge">Blog</span>
+            <span className="lsu-badge">Posts</span>
             <p className="text-sm text-muted">
               Writing by <span className="font-semibold text-foreground">{student.name}</span>
             </p>

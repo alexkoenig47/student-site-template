@@ -25,7 +25,7 @@ export default function BlogPostPage({ params }: Props) {
         <div className="relative space-y-5">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <Link className="lsu-link text-sm" href="/blog">
-              ← Back to Blog
+              ← Back to Posts
             </Link>
             <span className="lsu-badge">Purple &amp; Gold</span>
           </div>
@@ -55,7 +55,7 @@ export default function BlogPostPage({ params }: Props) {
 
       <article className="lsu-card prose prose-zinc max-w-none prose-a:text-brand-purple prose-a:decoration-brand-gold/70 prose-a:underline-offset-4">
         <p>
-          This is a starter blog post template. Replace this content with your real post text—what
+          This is a starter post template. Replace this content with your real post text—what
           you learned, what you built, and what you’d do differently next time.
         </p>
         <h2>What this post is about</h2>
