@@ -40,14 +40,62 @@ jobs:
           fi
           echo "OIDC request URL is set (length ${#ACTIONS_ID_TOKEN_REQUEST_URL})."
 
-      # Region hardcoded here so repo vars cannot break credential config.
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::286103605609:role/github-role
-          aws-region: us-east-1
-          audience: sts.amazonaws.com
-          role-session-name: github-actions-amplify-${{ github.run_id }}
+      # Manual OIDC + STS so logs show the real error (GitHub HTTP vs IAM trust).
+      - name: Assume AWS role via GitHub OIDC
+        env:
+          AWS_ROLE_ARN: arn:aws:iam::286103605609:role/github-role
+        run: |
+          set -euo pipefail
+          REQ_URL="${ACTIONS_ID_TOKEN_REQUEST_URL}"
+          if [[ "${REQ_URL}" == *"?"* ]]; then
+            REQ_URL="${REQ_URL}&audience=sts.amazonaws.com"
+          else
+            REQ_URL="${REQ_URL}?audience=sts.amazonaws.com"
+          fi
+          echo "Fetching GitHub OIDC token (audience=sts.amazonaws.com)..."
+          HTTP_BODY=$(mktemp)
+          HTTP_CODE=$(curl -sS -o "${HTTP_BODY}" -w "%{http_code}" \
+            -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${REQ_URL}")
+          if [ "${HTTP_CODE}" != "200" ]; then
+            echo "::error::GitHub OIDC token request failed with HTTP ${HTTP_CODE}"
+            cat "${HTTP_BODY}"
+            exit 1
+          fi
+          WEB_IDENTITY_TOKEN=$(jq -r '.value // empty' "${HTTP_BODY}")
+          rm -f "${HTTP_BODY}"
+          if [ -z "${WEB_IDENTITY_TOKEN}" ] || [ "${WEB_IDENTITY_TOKEN}" = "null" ]; then
+            echo "::error::GitHub OIDC response had no .value JWT"
+            exit 1
+          fi
+          echo "Calling sts:AssumeRoleWithWebIdentity for ${AWS_ROLE_ARN}..."
+          set +e
+          CREDS_JSON=$(aws sts assume-role-with-web-identity \
+            --role-arn "${AWS_ROLE_ARN}" \
+            --role-session-name "gha-${{ github.run_id }}" \
+            --web-identity-token "${WEB_IDENTITY_TOKEN}" \
+            --duration-seconds 3600 \
+            --output json 2>&1)
+          STS_RC=$?
+          set -e
+          if [ "${STS_RC}" -ne 0 ]; then
+            echo "::error::AssumeRoleWithWebIdentity failed — IAM trust policy or OIDC provider mismatch. AWS CLI output:"
+            echo "${CREDS_JSON}"
+            echo "Fix: IAM role trust must allow token.actions.githubusercontent.com, aud=sts.amazonaws.com, and sub matching this repo (e.g. repo:alexkoenig47/student-site-template:ref:refs/heads/main)."
+            exit 1
+          fi
+          AK=$(echo "${CREDS_JSON}" | jq -r '.Credentials.AccessKeyId')
+          SK=$(echo "${CREDS_JSON}" | jq -r '.Credentials.SecretAccessKey')
+          ST=$(echo "${CREDS_JSON}" | jq -r '.Credentials.SessionToken')
+          echo "::add-mask::${AK}"
+          echo "::add-mask::${SK}"
+          echo "::add-mask::${ST}"
+          echo "AWS_ACCESS_KEY_ID=${AK}" >> "${GITHUB_ENV}"
+          echo "AWS_SECRET_ACCESS_KEY=${SK}" >> "${GITHUB_ENV}"
+          echo "AWS_SESSION_TOKEN=${ST}" >> "${GITHUB_ENV}"
+          echo "AWS_DEFAULT_REGION=us-east-1" >> "${GITHUB_ENV}"
+          echo "AWS_REGION=us-east-1" >> "${GITHUB_ENV}"
+          echo "OK — temporary AWS credentials loaded for this job."
 
       - name: Deploy CloudFormation stack
         env:
