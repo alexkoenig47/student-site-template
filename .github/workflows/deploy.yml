@@ -173,7 +173,8 @@ jobs:
                       FrontendDomain=${FRONTEND_DOMAIN} \
                       BackendDomain=${BACKEND_DOMAIN} \
                       BaseDomain=${BASE_DOMAIN} \
-                      GitHubActionsRoleArn=${GITHUB_ACTIONS_ROLE_ARN} \
+                      TemplatesBucketName=${{ steps.artifacts-bucket.outputs.bucket_name }} \
+                      ECRRepositoryUri=${{ steps.ecr-repo.outputs.repository_uri }} \
                     --capabilities CAPABILITY_IAM \
                     --region ${AWS_REGION} \
                     --no-fail-on-empty-changeset

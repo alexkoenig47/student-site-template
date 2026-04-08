@@ -25,52 +25,22 @@ Parameters:
     Type: String
     Description: Base domain name (e.g., example.com)
 
-  GitHubActionsRoleArn:
+  # Bucket must already exist and contain frontend-stack.yml + backend-stack.yml (CI uploads before deploy).
+  # Using Ref to a bucket created in the same template fails AWS::EarlyValidation::ResourceExistenceCheck.
+  TemplatesBucketName:
     Type: String
-    Description: ARN of the GitHub Actions IAM role
+    Description: Existing S3 bucket name holding nested stack templates
+
+  # ECR repo is created by CI before this stack; pass URI so we do not duplicate AWS::ECR::Repository here.
+  ECRRepositoryUri:
+    Type: String
+    Description: Full ECR repository URI (e.g. 123456789.dkr.ecr.us-east-1.amazonaws.com/my-repo)
 
 Resources:
-  ArtifactsBucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      BucketName: !Sub '${ProjectName}-artifacts-${AWS::AccountId}'
-      VersioningConfiguration:
-        Status: Enabled
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
-
-  ECRRepository:
-    Type: AWS::ECR::Repository
-    Properties:
-      RepositoryName: !Sub '${ProjectName}-backend'
-      ImageScanningConfiguration:
-        ScanOnPush: true
-      LifecyclePolicy:
-        LifecyclePolicyText: |
-          {
-            "rules": [
-              {
-                "rulePriority": 1,
-                "description": "Keep last 10 images",
-                "selection": {
-                  "tagStatus": "any",
-                  "countType": "imageCountMoreThan",
-                  "countNumber": 10
-                },
-                "action": {
-                  "type": "expire"
-                }
-              }
-            ]
-          }
-
   FrontendStack:
     Type: AWS::CloudFormation::Stack
     Properties:
-      TemplateURL: !Sub 'https://${ArtifactsBucket}.s3.${AWS::Region}.amazonaws.com/frontend-stack.yml'
+      TemplateURL: !Sub 'https://${TemplatesBucketName}.s3.${AWS::Region}.amazonaws.com/frontend-stack.yml'
       Parameters:
         ProjectName: !Ref ProjectName
         HostedZoneId: !Ref HostedZoneId
@@ -81,24 +51,24 @@ Resources:
   BackendStack:
     Type: AWS::CloudFormation::Stack
     Properties:
-      TemplateURL: !Sub 'https://${ArtifactsBucket}.s3.${AWS::Region}.amazonaws.com/backend-stack.yml'
+      TemplateURL: !Sub 'https://${TemplatesBucketName}.s3.${AWS::Region}.amazonaws.com/backend-stack.yml'
       Parameters:
         ProjectName: !Ref ProjectName
         HostedZoneId: !Ref HostedZoneId
         BackendDomain: !Ref BackendDomain
         BaseDomain: !Ref BaseDomain
-        ECRRepositoryUri: !GetAtt ECRRepository.RepositoryUri
+        ECRRepositoryUri: !Ref ECRRepositoryUri
 
 Outputs:
   ArtifactsBucketName:
-    Description: Name of the artifacts S3 bucket
-    Value: !Ref ArtifactsBucket
+    Description: S3 bucket holding nested stack templates
+    Value: !Ref TemplatesBucketName
     Export:
       Name: !Sub '${ProjectName}-ArtifactsBucket'
 
   ECRRepositoryUri:
     Description: URI of the ECR repository
-    Value: !GetAtt ECRRepository.RepositoryUri
+    Value: !Ref ECRRepositoryUri
     Export:
       Name: !Sub '${ProjectName}-ECRRepositoryUri'
 
