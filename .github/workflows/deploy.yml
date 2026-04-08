@@ -162,6 +162,28 @@ jobs:
 
                   echo "image_uri=${REPO_URI}:latest" >> $GITHUB_OUTPUT
 
+            # Stacks in ROLLBACK_COMPLETE (etc.) cannot be updated — must delete first.
+            - name: Remove failed CloudFormation stack if needed
+              run: |
+                  set -e
+                  STACK_NAME="${PROJECT_NAME}-main"
+                  STATUS=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "${AWS_REGION}" --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
+                  echo "Stack ${STACK_NAME} status: ${STATUS}"
+                  case "${STATUS}" in
+                    ROLLBACK_COMPLETE|ROLLBACK_FAILED|CREATE_FAILED)
+                      echo "Deleting stack (cannot update from ${STATUS})..."
+                      aws cloudformation delete-stack --stack-name "$STACK_NAME" --region "${AWS_REGION}"
+                      aws cloudformation wait stack-delete-complete --stack-name "$STACK_NAME" --region "${AWS_REGION}"
+                      echo "Deleted. Deploy step will create a fresh stack."
+                      ;;
+                    DOES_NOT_EXIST)
+                      echo "No existing stack; deploy will create it."
+                      ;;
+                    *)
+                      echo "Proceeding with deploy (update existing stack)."
+                      ;;
+                  esac
+
             - name: Deploy CloudFormation main stack
               run: |
                   aws cloudformation deploy \
