@@ -27,11 +27,67 @@ jobs:
             - name: Checkout code
               uses: actions/checkout@v4
 
-            - name: Configure AWS credentials
-              uses: aws-actions/configure-aws-credentials@v4
-              with:
-                  role-to-assume: ${{ env.GITHUB_ACTIONS_ROLE_ARN }}
-                  aws-region: ${{ env.AWS_REGION }}
+            # Avoid aws-actions/configure-aws-credentials (opaque errors). Same pattern as deploy-amplify.yml.
+            - name: Check GitHub OIDC is available
+              run: |
+                  if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
+                    echo "::error::OIDC env vars missing. Set repo Actions → Workflow permissions (Read and write) and id-token: write on the job."
+                    exit 1
+                  fi
+
+            - name: Assume AWS role via GitHub OIDC
+              env:
+                  AWS_ASSUME_ROLE_ARN: ${{ secrets.GITHUB_ACTIONS_ROLE_ARN }}
+              run: |
+                  set -euo pipefail
+                  AWS_ROLE_ARN="${AWS_ASSUME_ROLE_ARN:-arn:aws:iam::286103605609:role/github-role}"
+                  REQ_URL="${ACTIONS_ID_TOKEN_REQUEST_URL}"
+                  if [[ "${REQ_URL}" == *"?"* ]]; then
+                    REQ_URL="${REQ_URL}&audience=sts.amazonaws.com"
+                  else
+                    REQ_URL="${REQ_URL}?audience=sts.amazonaws.com"
+                  fi
+                  echo "Fetching GitHub OIDC token..."
+                  HTTP_BODY=$(mktemp)
+                  HTTP_CODE=$(curl -sS -o "${HTTP_BODY}" -w "%{http_code}" \
+                    -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+                    "${REQ_URL}")
+                  if [ "${HTTP_CODE}" != "200" ]; then
+                    echo "::error::GitHub OIDC token request failed HTTP ${HTTP_CODE}"
+                    cat "${HTTP_BODY}"
+                    exit 1
+                  fi
+                  WEB_IDENTITY_TOKEN=$(jq -r '.value // empty' "${HTTP_BODY}")
+                  rm -f "${HTTP_BODY}"
+                  if [ -z "${WEB_IDENTITY_TOKEN}" ] || [ "${WEB_IDENTITY_TOKEN}" = "null" ]; then
+                    echo "::error::No JWT in OIDC response"
+                    exit 1
+                  fi
+                  echo "Assuming role ${AWS_ROLE_ARN}..."
+                  set +e
+                  CREDS_JSON=$(aws sts assume-role-with-web-identity \
+                    --role-arn "${AWS_ROLE_ARN}" \
+                    --role-session-name "gha-deploy-${{ github.run_id }}" \
+                    --web-identity-token "${WEB_IDENTITY_TOKEN}" \
+                    --duration-seconds 3600 \
+                    --output json 2>&1)
+                  STS_RC=$?
+                  set -e
+                  if [ "${STS_RC}" -ne 0 ]; then
+                    echo "::error::AssumeRoleWithWebIdentity failed:"
+                    echo "${CREDS_JSON}"
+                    exit 1
+                  fi
+                  AK=$(echo "${CREDS_JSON}" | jq -r '.Credentials.AccessKeyId')
+                  SK=$(echo "${CREDS_JSON}" | jq -r '.Credentials.SecretAccessKey')
+                  ST=$(echo "${CREDS_JSON}" | jq -r '.Credentials.SessionToken')
+                  echo "::add-mask::${AK}"
+                  echo "::add-mask::${SK}"
+                  echo "::add-mask::${ST}"
+                  echo "AWS_ACCESS_KEY_ID=${AK}" >> "${GITHUB_ENV}"
+                  echo "AWS_SECRET_ACCESS_KEY=${SK}" >> "${GITHUB_ENV}"
+                  echo "AWS_SESSION_TOKEN=${ST}" >> "${GITHUB_ENV}"
+                  echo "AWS_DEFAULT_REGION=${{ env.AWS_REGION }}" >> "${GITHUB_ENV}"
 
             - name: Set up Python
               uses: actions/setup-python@v5
