@@ -173,8 +173,15 @@ jobs:
                     ROLLBACK_COMPLETE|ROLLBACK_FAILED|CREATE_FAILED)
                       echo "Deleting stack (cannot update from ${STATUS})..."
                       aws cloudformation delete-stack --stack-name "$STACK_NAME" --region "${AWS_REGION}"
-                      aws cloudformation wait stack-delete-complete --stack-name "$STACK_NAME" --region "${AWS_REGION}"
-                      echo "Deleted. Deploy step will create a fresh stack."
+                      if ! aws cloudformation wait stack-delete-complete --stack-name "$STACK_NAME" --region "${AWS_REGION}"; then
+                        echo "Normal delete failed. Retrying with FORCE_DELETE_STACK..."
+                        aws cloudformation delete-stack \
+                          --stack-name "$STACK_NAME" \
+                          --region "${AWS_REGION}" \
+                          --deletion-mode FORCE_DELETE_STACK
+                        aws cloudformation wait stack-delete-complete --stack-name "$STACK_NAME" --region "${AWS_REGION}"
+                      fi
+                      echo "Deleted (or force-deleted). Deploy step will create a fresh stack."
                       ;;
                     DOES_NOT_EXIST)
                       echo "No existing stack; deploy will create it."
