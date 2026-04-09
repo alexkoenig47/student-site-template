@@ -65,20 +65,11 @@ Resources:
     Type: AWS::Amplify::Domain
     Properties:
       AppId: !GetAtt AmplifyApp.AppId
-      DomainName: !Sub '${FrontendDomain}.${BaseDomain}'
+      # DomainName must be the apex domain; subdomain goes in Prefix.
+      DomainName: !Ref BaseDomain
       SubDomainSettings:
         - Branch: !Ref AmplifyBranch
-          Prefix: !Sub '${FrontendDomain}'
-
-  Route53Record:
-    Type: AWS::Route53::RecordSet
-    Properties:
-      HostedZoneId: !Ref HostedZoneId
-      Name: !Sub '${FrontendDomain}.${BaseDomain}'
-      Type: CNAME
-      TTL: 300
-      ResourceRecords:
-        - !GetAtt AmplifyDomain.DomainName
+          Prefix: !Ref FrontendDomain
 
 Outputs:
   FrontendURL:
