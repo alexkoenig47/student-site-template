@@ -55,6 +55,7 @@ Resources:
       Parameters:
         ProjectName: !Ref ProjectName
         HostedZoneId: !Ref HostedZoneId
+        FrontendDomain: !Ref FrontendDomain
         BackendDomain: !Ref BackendDomain
         BaseDomain: !Ref BaseDomain
         ECRRepositoryUri: !Ref ECRRepositoryUri

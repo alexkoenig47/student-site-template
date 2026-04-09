@@ -10,6 +10,10 @@ Parameters:
     Type: String
     Description: Route53 Hosted Zone ID
 
+  FrontendDomain:
+    Type: String
+    Description: Subdomain for frontend app (used for CORS origin)
+
   BackendDomain:
     Type: String
     Description: Subdomain for backend API
