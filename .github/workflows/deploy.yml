@@ -94,6 +94,20 @@ jobs:
               with:
                   python-version: "3.11"
 
+            - name: Validate required deployment inputs
+              run: |
+                  set -euo pipefail
+                  missing=0
+                  for v in HOSTED_ZONE_ID BASE_DOMAIN FRONTEND_DOMAIN BACKEND_DOMAIN PROJECT_NAME; do
+                    if [ -z "${!v:-}" ]; then
+                      echo "::error::Missing required value: ${v}. Set it in repo Settings -> Secrets and variables -> Actions."
+                      missing=1
+                    fi
+                  done
+                  if [ "${missing}" -ne 0 ]; then
+                    exit 1
+                  fi
+
             - name: Install AWS CLI and CloudFormation dependencies
               run: |
                   pip install boto3 awscli
