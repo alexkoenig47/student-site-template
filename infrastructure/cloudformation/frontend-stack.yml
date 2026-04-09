@@ -22,6 +22,17 @@ Parameters:
     Type: String
     Description: Base domain name
 
+  EnableCustomDomain:
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: Set to true only when BaseDomain is configured in Route53 and ready for Amplify domain association
+
+Conditions:
+  CreateAmplifyDomain: !Equals [!Ref EnableCustomDomain, 'true']
+
 Resources:
   AmplifyApp:
     Type: AWS::Amplify::App
@@ -63,6 +74,7 @@ Resources:
 
   AmplifyDomain:
     Type: AWS::Amplify::Domain
+    Condition: CreateAmplifyDomain
     Properties:
       AppId: !GetAtt AmplifyApp.AppId
       # DomainName must be the apex domain; subdomain goes in Prefix.
