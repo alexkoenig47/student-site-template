@@ -170,7 +170,7 @@ jobs:
                   STATUS=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "${AWS_REGION}" --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
                   echo "Stack ${STACK_NAME} status: ${STATUS}"
                   case "${STATUS}" in
-                    ROLLBACK_COMPLETE|ROLLBACK_FAILED|CREATE_FAILED)
+                    ROLLBACK_COMPLETE|ROLLBACK_FAILED|CREATE_FAILED|DELETE_FAILED)
                       echo "Deleting stack (cannot update from ${STATUS})..."
                       aws cloudformation delete-stack --stack-name "$STACK_NAME" --region "${AWS_REGION}"
                       if ! aws cloudformation wait stack-delete-complete --stack-name "$STACK_NAME" --region "${AWS_REGION}"; then
