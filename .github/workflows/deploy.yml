@@ -155,6 +155,82 @@ jobs:
                   aws s3 cp infrastructure/cloudformation/backend-stack.yml \
                     "s3://${{ steps.artifacts-bucket.outputs.bucket_name }}/backend-stack.yml"
 
+            # Run before Docker so long builds do not eat the wait budget. ACM/DNS/ECS can keep CREATE_IN_PROGRESS for an hour+.
+            - name: Remove failed CloudFormation stack if needed
+              run: |
+                  set -e
+                  STACK_NAME="${PROJECT_NAME}-main"
+                  WAIT_SEC=30
+                  MAX_WAIT_ROUNDS=240
+                  round=0
+                  while true; do
+                    STATUS=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "${AWS_REGION}" --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
+                    if [ "${STATUS}" = "DOES_NOT_EXIST" ]; then
+                      echo "Stack ${STACK_NAME}: no stack; deploy will create it."
+                      exit 0
+                    fi
+                    case "${STATUS}" in
+                      *IN_PROGRESS)
+                        round=$((round + 1))
+                        if [ "${round}" -ge "${MAX_WAIT_ROUNDS}" ]; then
+                          echo "::error::Stack still ${STATUS} after $((MAX_WAIT_ROUNDS * WAIT_SEC / 60)) minutes. Common causes: ACM certificate DNS validation pending, or a wedged create. Fix Route53 records or delete the stack from the console if rollback never finishes."
+                          echo ""
+                          echo "Recent root stack events (${STACK_NAME}):"
+                          aws cloudformation describe-stack-events \
+                            --stack-name "$STACK_NAME" \
+                            --region "${AWS_REGION}" \
+                            --max-items 30 \
+                            --query 'StackEvents[].[Timestamp,ResourceStatus,LogicalResourceId,ResourceStatusReason]' \
+                            --output table 2>/dev/null || true
+                          echo ""
+                          for NESTED in $(aws cloudformation describe-stack-resources \
+                            --stack-name "$STACK_NAME" \
+                            --region "${AWS_REGION}" \
+                            --query "StackResources[?ResourceType=='AWS::CloudFormation::Stack'].PhysicalResourceId" \
+                            --output text 2>/dev/null); do
+                            [ -z "${NESTED}" ] && continue
+                            echo "Nested stack events (${NESTED}):"
+                            aws cloudformation describe-stack-events \
+                              --stack-name "${NESTED}" \
+                              --region "${AWS_REGION}" \
+                              --max-items 20 \
+                              --query 'StackEvents[].[Timestamp,ResourceStatus,LogicalResourceId,ResourceStatusReason]' \
+                              --output table 2>/dev/null || true
+                            echo ""
+                          done
+                          exit 1
+                        fi
+                        if [ "${round}" -eq 1 ] || [ $((round % 5)) -eq 0 ]; then
+                          echo "Stack ${STACK_NAME} status: ${STATUS} — waited $((round * WAIT_SEC / 60))m / max $((MAX_WAIT_ROUNDS * WAIT_SEC / 60))m (${round}/${MAX_WAIT_ROUNDS})"
+                        fi
+                        sleep "${WAIT_SEC}"
+                        ;;
+                      *)
+                        echo "Stack ${STACK_NAME} stable status: ${STATUS}"
+                        break
+                        ;;
+                    esac
+                  done
+
+                  case "${STATUS}" in
+                    ROLLBACK_COMPLETE|ROLLBACK_FAILED|CREATE_FAILED|DELETE_FAILED)
+                      echo "Deleting stack (cannot update from ${STATUS})..."
+                      aws cloudformation delete-stack --stack-name "$STACK_NAME" --region "${AWS_REGION}"
+                      if ! aws cloudformation wait stack-delete-complete --stack-name "$STACK_NAME" --region "${AWS_REGION}"; then
+                        echo "Normal delete failed. Retrying with FORCE_DELETE_STACK..."
+                        aws cloudformation delete-stack \
+                          --stack-name "$STACK_NAME" \
+                          --region "${AWS_REGION}" \
+                          --deletion-mode FORCE_DELETE_STACK
+                        aws cloudformation wait stack-delete-complete --stack-name "$STACK_NAME" --region "${AWS_REGION}"
+                      fi
+                      echo "Deleted (or force-deleted). Deploy step will create a fresh stack."
+                      ;;
+                    *)
+                      echo "Proceeding with deploy (update existing stack or create if deleted above)."
+                      ;;
+                  esac
+
             - name: Build and push Docker image
               id: docker-build
               run: |
@@ -175,57 +251,6 @@ jobs:
                   docker push ${REPO_URI}:${GITHUB_SHA}
 
                   echo "image_uri=${REPO_URI}:latest" >> $GITHUB_OUTPUT
-
-            # Stacks in ROLLBACK_COMPLETE (etc.) cannot be updated — must delete first.
-            # CREATE_IN_PROGRESS / ROLLBACK_IN_PROGRESS: cannot deploy or delete until AWS finishes; wait then handle failed terminal states.
-            - name: Remove failed CloudFormation stack if needed
-              run: |
-                  set -e
-                  STACK_NAME="${PROJECT_NAME}-main"
-                  MAX_WAIT_ROUNDS=120
-                  round=0
-                  while true; do
-                    STATUS=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "${AWS_REGION}" --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
-                    echo "Stack ${STACK_NAME} status: ${STATUS}"
-                    if [ "${STATUS}" = "DOES_NOT_EXIST" ]; then
-                      echo "No existing stack; deploy will create it."
-                      exit 0
-                    fi
-                    case "${STATUS}" in
-                      *IN_PROGRESS)
-                        round=$((round + 1))
-                        if [ "${round}" -ge "${MAX_WAIT_ROUNDS}" ]; then
-                          echo "::error::Stack still ${STATUS} after $((MAX_WAIT_ROUNDS * 15 / 60)) minutes. Open CloudFormation in the console, wait for rollback, or contact AWS support if wedged."
-                          exit 1
-                        fi
-                        echo "Stack operation in progress; waiting 15s (${round}/${MAX_WAIT_ROUNDS})..."
-                        sleep 15
-                        ;;
-                      *)
-                        break
-                        ;;
-                    esac
-                  done
-
-                  echo "Stable status: ${STATUS}"
-                  case "${STATUS}" in
-                    ROLLBACK_COMPLETE|ROLLBACK_FAILED|CREATE_FAILED|DELETE_FAILED)
-                      echo "Deleting stack (cannot update from ${STATUS})..."
-                      aws cloudformation delete-stack --stack-name "$STACK_NAME" --region "${AWS_REGION}"
-                      if ! aws cloudformation wait stack-delete-complete --stack-name "$STACK_NAME" --region "${AWS_REGION}"; then
-                        echo "Normal delete failed. Retrying with FORCE_DELETE_STACK..."
-                        aws cloudformation delete-stack \
-                          --stack-name "$STACK_NAME" \
-                          --region "${AWS_REGION}" \
-                          --deletion-mode FORCE_DELETE_STACK
-                        aws cloudformation wait stack-delete-complete --stack-name "$STACK_NAME" --region "${AWS_REGION}"
-                      fi
-                      echo "Deleted (or force-deleted). Deploy step will create a fresh stack."
-                      ;;
-                    *)
-                      echo "Proceeding with deploy (update existing stack or create if deleted above)."
-                      ;;
-                  esac
 
             - name: Deploy CloudFormation main stack
               env:
