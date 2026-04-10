@@ -207,9 +207,11 @@ jobs:
 
             - name: Deploy CloudFormation main stack
               run: |
+                  set +e
+                  STACK_NAME="${PROJECT_NAME}-main"
                   aws cloudformation deploy \
                     --template-file infrastructure/cloudformation/main.yml \
-                    --stack-name ${PROJECT_NAME}-main \
+                    --stack-name "${STACK_NAME}" \
                     --parameter-overrides \
                       ProjectName=${PROJECT_NAME} \
                       HostedZoneId=${HOSTED_ZONE_ID} \
@@ -221,6 +223,33 @@ jobs:
                     --capabilities CAPABILITY_IAM \
                     --region ${AWS_REGION} \
                     --no-fail-on-empty-changeset
+                  RC=$?
+                  set -e
+                  if [ "${RC}" -ne 0 ]; then
+                    echo ""
+                    echo "::error::CloudFormation deploy failed. Root stack failure events (${STACK_NAME}):"
+                    aws cloudformation describe-stack-events \
+                      --stack-name "${STACK_NAME}" \
+                      --region "${AWS_REGION}" \
+                      --query "StackEvents[?ResourceStatus=='CREATE_FAILED' || ResourceStatus=='UPDATE_FAILED' || ResourceStatus=='DELETE_FAILED'].[Timestamp,LogicalResourceId,ResourceType,ResourceStatusReason]" \
+                      --output table || true
+                    echo ""
+                    echo "Nested stack failure events (if any):"
+                    for NESTED in $(aws cloudformation describe-stack-resources \
+                      --stack-name "${STACK_NAME}" \
+                      --region "${AWS_REGION}" \
+                      --query "StackResources[?ResourceType=='AWS::CloudFormation::Stack'].PhysicalResourceId" \
+                      --output text 2>/dev/null); do
+                      [ -z "${NESTED}" ] && continue
+                      echo "--- ${NESTED} ---"
+                      aws cloudformation describe-stack-events \
+                        --stack-name "${NESTED}" \
+                        --region "${AWS_REGION}" \
+                        --query "StackEvents[?ResourceStatus=='CREATE_FAILED' || ResourceStatus=='UPDATE_FAILED'].[Timestamp,LogicalResourceId,ResourceType,ResourceStatusReason]" \
+                        --output table || true
+                    done
+                    exit "${RC}"
+                  fi
 
             - name: Update ECS service with new image
               run: |
