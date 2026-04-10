@@ -177,12 +177,37 @@ jobs:
                   echo "image_uri=${REPO_URI}:latest" >> $GITHUB_OUTPUT
 
             # Stacks in ROLLBACK_COMPLETE (etc.) cannot be updated — must delete first.
+            # CREATE_IN_PROGRESS / ROLLBACK_IN_PROGRESS: cannot deploy or delete until AWS finishes; wait then handle failed terminal states.
             - name: Remove failed CloudFormation stack if needed
               run: |
                   set -e
                   STACK_NAME="${PROJECT_NAME}-main"
-                  STATUS=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "${AWS_REGION}" --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
-                  echo "Stack ${STACK_NAME} status: ${STATUS}"
+                  MAX_WAIT_ROUNDS=120
+                  round=0
+                  while true; do
+                    STATUS=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "${AWS_REGION}" --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
+                    echo "Stack ${STACK_NAME} status: ${STATUS}"
+                    if [ "${STATUS}" = "DOES_NOT_EXIST" ]; then
+                      echo "No existing stack; deploy will create it."
+                      exit 0
+                    fi
+                    case "${STATUS}" in
+                      *IN_PROGRESS)
+                        round=$((round + 1))
+                        if [ "${round}" -ge "${MAX_WAIT_ROUNDS}" ]; then
+                          echo "::error::Stack still ${STATUS} after $((MAX_WAIT_ROUNDS * 15 / 60)) minutes. Open CloudFormation in the console, wait for rollback, or contact AWS support if wedged."
+                          exit 1
+                        fi
+                        echo "Stack operation in progress; waiting 15s (${round}/${MAX_WAIT_ROUNDS})..."
+                        sleep 15
+                        ;;
+                      *)
+                        break
+                        ;;
+                    esac
+                  done
+
+                  echo "Stable status: ${STATUS}"
                   case "${STATUS}" in
                     ROLLBACK_COMPLETE|ROLLBACK_FAILED|CREATE_FAILED|DELETE_FAILED)
                       echo "Deleting stack (cannot update from ${STATUS})..."
@@ -197,15 +222,14 @@ jobs:
                       fi
                       echo "Deleted (or force-deleted). Deploy step will create a fresh stack."
                       ;;
-                    DOES_NOT_EXIST)
-                      echo "No existing stack; deploy will create it."
-                      ;;
                     *)
-                      echo "Proceeding with deploy (update existing stack)."
+                      echo "Proceeding with deploy (update existing stack or create if deleted above)."
                       ;;
                   esac
 
             - name: Deploy CloudFormation main stack
+              env:
+                  AWS_ASSUME_ROLE_ARN: ${{ secrets.GITHUB_ACTIONS_ROLE_ARN }}
               run: |
                   set +e
                   STACK_NAME="${PROJECT_NAME}-main"
@@ -226,6 +250,31 @@ jobs:
                   RC=$?
                   set -e
                   if [ "${RC}" -ne 0 ]; then
+                    echo ""
+                    echo "Refreshing AWS credentials (session may have expired during long deploy)..."
+                    AWS_ROLE_ARN="${AWS_ASSUME_ROLE_ARN:-arn:aws:iam::286103605609:role/github-role}"
+                    REQ_URL="${ACTIONS_ID_TOKEN_REQUEST_URL}"
+                    if [[ "${REQ_URL}" == *"?"* ]]; then REQ_URL="${REQ_URL}&audience=sts.amazonaws.com"; else REQ_URL="${REQ_URL}?audience=sts.amazonaws.com"; fi
+                    HTTP_BODY=$(mktemp)
+                    HTTP_CODE=$(curl -sS -o "${HTTP_BODY}" -w "%{http_code}" -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "${REQ_URL}")
+                    if [ "${HTTP_CODE}" = "200" ]; then
+                      WEB_IDENTITY_TOKEN=$(jq -r '.value // empty' "${HTTP_BODY}")
+                      rm -f "${HTTP_BODY}"
+                      CREDS2=$(aws sts assume-role-with-web-identity \
+                        --role-arn "${AWS_ROLE_ARN}" \
+                        --role-session-name "gha-events-${{ github.run_id }}" \
+                        --web-identity-token "${WEB_IDENTITY_TOKEN}" \
+                        --duration-seconds 3600 \
+                        --output json 2>/dev/null) && {
+                        export AWS_ACCESS_KEY_ID=$(echo "${CREDS2}" | jq -r '.Credentials.AccessKeyId')
+                        export AWS_SECRET_ACCESS_KEY=$(echo "${CREDS2}" | jq -r '.Credentials.SecretAccessKey')
+                        export AWS_SESSION_TOKEN=$(echo "${CREDS2}" | jq -r '.Credentials.SessionToken')
+                        echo "Credentials refreshed for diagnostics."
+                      } || echo "::warning::Could not refresh credentials; event dump may fail with ExpiredToken."
+                    else
+                      rm -f "${HTTP_BODY}"
+                      echo "::warning::OIDC refresh failed HTTP ${HTTP_CODE}; event dump may fail."
+                    fi
                     echo ""
                     echo "::error::CloudFormation deploy failed. Root stack failure events (${STACK_NAME}):"
                     aws cloudformation describe-stack-events \

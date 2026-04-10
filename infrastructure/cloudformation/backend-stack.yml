@@ -218,14 +218,8 @@ Resources:
                   - logs:GetLogEvents
                 Resource: '*'
 
-  LogGroup:
-    Type: AWS::Logs::LogGroup
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      LogGroupName: !Sub '/ecs/${ProjectName}'
-      RetentionInDays: 7
-
+  # Do not manage LogGroup in CFN: /ecs/<name> often already exists (ECS auto-create or prior run),
+  # which causes AlreadyExists on stack create. Task def references the name; execution role may create it if missing.
   TaskDefinition:
     Type: AWS::ECS::TaskDefinition
     Properties:
@@ -251,7 +245,7 @@ Resources:
           LogConfiguration:
             LogDriver: awslogs
             Options:
-              awslogs-group: !Ref LogGroup
+              awslogs-group: !Sub '/ecs/${ProjectName}'
               awslogs-region: !Ref AWS::Region
               awslogs-stream-prefix: ecs
 
