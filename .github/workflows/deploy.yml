@@ -346,14 +346,30 @@ jobs:
                       echo "::warning::OIDC refresh failed HTTP ${HTTP_CODE}; event dump may fail."
                     fi
                     echo ""
-                    echo "::error::CloudFormation deploy failed. Root stack failure events (${STACK_NAME}):"
+                    echo "::error::CloudFormation deploy failed (${STACK_NAME})."
+                    echo "Root stack status:"
+                    aws cloudformation describe-stacks \
+                      --stack-name "${STACK_NAME}" \
+                      --region "${AWS_REGION}" \
+                      --query 'Stacks[0].[StackStatus,StackStatusReason]' \
+                      --output text 2>/dev/null || true
+                    echo ""
+                    echo "Root stack events with FAILED status (if any):"
                     aws cloudformation describe-stack-events \
                       --stack-name "${STACK_NAME}" \
                       --region "${AWS_REGION}" \
-                      --query "StackEvents[?ResourceStatus=='CREATE_FAILED' || ResourceStatus=='UPDATE_FAILED' || ResourceStatus=='DELETE_FAILED'].[Timestamp,LogicalResourceId,ResourceType,ResourceStatusReason]" \
-                      --output table || true
+                      --query "StackEvents[?contains(ResourceStatus, 'FAILED')].[Timestamp,ResourceStatus,LogicalResourceId,ResourceType,ResourceStatusReason]" \
+                      --output table 2>/dev/null || true
                     echo ""
-                    echo "Nested stack failure events (if any):"
+                    echo "Root stack — last 35 events (newest first):"
+                    aws cloudformation describe-stack-events \
+                      --stack-name "${STACK_NAME}" \
+                      --region "${AWS_REGION}" \
+                      --max-items 35 \
+                      --query 'StackEvents[].[Timestamp,ResourceStatus,LogicalResourceId,ResourceType,ResourceStatusReason]' \
+                      --output table 2>/dev/null || true
+                    echo ""
+                    echo "Nested stacks (events with FAILED + recent tail):"
                     for NESTED in $(aws cloudformation describe-stack-resources \
                       --stack-name "${STACK_NAME}" \
                       --region "${AWS_REGION}" \
@@ -364,8 +380,14 @@ jobs:
                       aws cloudformation describe-stack-events \
                         --stack-name "${NESTED}" \
                         --region "${AWS_REGION}" \
-                        --query "StackEvents[?ResourceStatus=='CREATE_FAILED' || ResourceStatus=='UPDATE_FAILED'].[Timestamp,LogicalResourceId,ResourceType,ResourceStatusReason]" \
-                        --output table || true
+                        --query "StackEvents[?contains(ResourceStatus, 'FAILED')].[Timestamp,ResourceStatus,LogicalResourceId,ResourceType,ResourceStatusReason]" \
+                        --output table 2>/dev/null || true
+                      aws cloudformation describe-stack-events \
+                        --stack-name "${NESTED}" \
+                        --region "${AWS_REGION}" \
+                        --max-items 25 \
+                        --query 'StackEvents[].[Timestamp,ResourceStatus,LogicalResourceId,ResourceType,ResourceStatusReason]' \
+                        --output table 2>/dev/null || true
                     done
                     exit "${RC}"
                   fi
