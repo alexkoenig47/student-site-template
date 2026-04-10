@@ -19,6 +19,10 @@ jobs:
     deploy:
         name: Deploy Infrastructure and Application
         runs-on: ubuntu-latest
+        # One deploy at a time so a second run does not call `deploy` while the stack is CREATE_IN_PROGRESS.
+        concurrency:
+            group: cfn-fullstack-${{ github.repository }}
+            cancel-in-progress: false
         permissions:
             id-token: write
             contents: read
@@ -296,6 +300,39 @@ jobs:
                   docker push ${REPO_URI}:${GITHUB_SHA}
 
                   echo "image_uri=${REPO_URI}:latest" >> $GITHUB_OUTPUT
+
+            # Stack may have entered CREATE_IN_PROGRESS during Docker (another run or long nested create). Deploy must not run until stable.
+            - name: Wait for stack ready before deploy
+              run: |
+                  set -e
+                  STACK_NAME="${PROJECT_NAME}-main"
+                  WAIT_SEC=30
+                  MAX_WAIT_ROUNDS=240
+                  round=0
+                  while true; do
+                    STATUS=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "${AWS_REGION}" --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
+                    if [ "${STATUS}" = "DOES_NOT_EXIST" ]; then
+                      echo "No stack yet; deploy will create it."
+                      exit 0
+                    fi
+                    case "${STATUS}" in
+                      *IN_PROGRESS)
+                        round=$((round + 1))
+                        if [ "${round}" -ge "${MAX_WAIT_ROUNDS}" ]; then
+                          echo "::error::Stack still ${STATUS} after $((MAX_WAIT_ROUNDS * WAIT_SEC / 60)) minutes (pre-deploy wait). Another job may be creating it, or ACM/ECS is still working."
+                          exit 1
+                        fi
+                        if [ "${round}" -eq 1 ] || [ $((round % 5)) -eq 0 ]; then
+                          echo "Pre-deploy wait: ${STATUS} — $((round * WAIT_SEC / 60))m / max $((MAX_WAIT_ROUNDS * WAIT_SEC / 60))m (${round}/${MAX_WAIT_ROUNDS})"
+                        fi
+                        sleep "${WAIT_SEC}"
+                        ;;
+                      *)
+                        echo "Stack ready for deploy: ${STATUS}"
+                        exit 0
+                        ;;
+                    esac
+                  done
 
             - name: Deploy CloudFormation main stack
               env:
