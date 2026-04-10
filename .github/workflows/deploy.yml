@@ -231,6 +231,51 @@ jobs:
                       ;;
                   esac
 
+            - name: Refresh AWS role credentials before build/deploy
+              env:
+                  AWS_ASSUME_ROLE_ARN: ${{ secrets.GITHUB_ACTIONS_ROLE_ARN }}
+              run: |
+                  set -euo pipefail
+                  AWS_ROLE_ARN="${AWS_ASSUME_ROLE_ARN:-arn:aws:iam::286103605609:role/github-role}"
+                  REQ_URL="${ACTIONS_ID_TOKEN_REQUEST_URL}"
+                  if [[ "${REQ_URL}" == *"?"* ]]; then
+                    REQ_URL="${REQ_URL}&audience=sts.amazonaws.com"
+                  else
+                    REQ_URL="${REQ_URL}?audience=sts.amazonaws.com"
+                  fi
+                  echo "Refreshing AWS credentials via GitHub OIDC..."
+                  HTTP_BODY=$(mktemp)
+                  HTTP_CODE=$(curl -sS -o "${HTTP_BODY}" -w "%{http_code}" \
+                    -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+                    "${REQ_URL}")
+                  if [ "${HTTP_CODE}" != "200" ]; then
+                    echo "::error::GitHub OIDC token request failed HTTP ${HTTP_CODE}"
+                    cat "${HTTP_BODY}"
+                    exit 1
+                  fi
+                  WEB_IDENTITY_TOKEN=$(jq -r '.value // empty' "${HTTP_BODY}")
+                  rm -f "${HTTP_BODY}"
+                  if [ -z "${WEB_IDENTITY_TOKEN}" ] || [ "${WEB_IDENTITY_TOKEN}" = "null" ]; then
+                    echo "::error::No JWT in OIDC response"
+                    exit 1
+                  fi
+                  CREDS_JSON=$(aws sts assume-role-with-web-identity \
+                    --role-arn "${AWS_ROLE_ARN}" \
+                    --role-session-name "gha-refresh-${{ github.run_id }}" \
+                    --web-identity-token "${WEB_IDENTITY_TOKEN}" \
+                    --duration-seconds 3600 \
+                    --output json)
+                  AK=$(echo "${CREDS_JSON}" | jq -r '.Credentials.AccessKeyId')
+                  SK=$(echo "${CREDS_JSON}" | jq -r '.Credentials.SecretAccessKey')
+                  ST=$(echo "${CREDS_JSON}" | jq -r '.Credentials.SessionToken')
+                  echo "::add-mask::${AK}"
+                  echo "::add-mask::${SK}"
+                  echo "::add-mask::${ST}"
+                  echo "AWS_ACCESS_KEY_ID=${AK}" >> "${GITHUB_ENV}"
+                  echo "AWS_SECRET_ACCESS_KEY=${SK}" >> "${GITHUB_ENV}"
+                  echo "AWS_SESSION_TOKEN=${ST}" >> "${GITHUB_ENV}"
+                  echo "AWS_DEFAULT_REGION=${{ env.AWS_REGION }}" >> "${GITHUB_ENV}"
+
             - name: Build and push Docker image
               id: docker-build
               run: |
