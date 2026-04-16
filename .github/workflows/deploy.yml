@@ -435,17 +435,20 @@ jobs:
                   }
 
                   aws_cf() {
-                    local out rc
+                    local out rc errexit_was_on=0
+                    if [[ $- == *e* ]]; then
+                      errexit_was_on=1
+                    fi
                     set +e
                     out=$(aws "$@" 2>&1)
                     rc=$?
-                    set -e
                     if [ "${rc}" -ne 0 ] && echo "${out}" | grep -q 'ExpiredToken'; then
                       echo "AWS token expired; refreshing and retrying command..." >&2
                       refresh_aws_credentials >&2
-                      set +e
                       out=$(aws "$@" 2>&1)
                       rc=$?
+                    fi
+                    if [ "${errexit_was_on}" -eq 1 ]; then
                       set -e
                     fi
                     AWS_CF_OUT="${out}"
