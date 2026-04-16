@@ -392,7 +392,7 @@ jobs:
                   STACK_NAME="${PROJECT_NAME}-main"
                   CHANGE_SET_NAME="${PROJECT_NAME}-main-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
                   WAIT_SEC=30
-                  MAX_WAIT_ROUNDS=240
+                  MAX_WAIT_ROUNDS=480
                   AWS_ROLE_ARN="${AWS_ASSUME_ROLE_ARN:-arn:aws:iam::286103605609:role/github-role}"
 
                   refresh_aws_credentials() {
@@ -440,22 +440,22 @@ jobs:
                     out=$(aws "$@" 2>&1)
                     rc=$?
                     set -e
-                    if [ "${rc}" -eq 0 ]; then
-                      printf '%s' "${out}"
-                      return 0
-                    fi
-                    if echo "${out}" | grep -q 'ExpiredToken'; then
+                    if [ "${rc}" -ne 0 ] && echo "${out}" | grep -q 'ExpiredToken'; then
                       echo "AWS token expired; refreshing and retrying command..." >&2
                       refresh_aws_credentials >&2
+                      set +e
                       out=$(aws "$@" 2>&1)
                       rc=$?
+                      set -e
                     fi
+                    AWS_CF_OUT="${out}"
                     if [ "${rc}" -ne 0 ]; then
                       echo "::error::AWS command failed: aws $*" >&2
                       echo "${out}" >&2
                       return "${rc}"
                     fi
-                    printf '%s' "${out}"
+                    printf '%s\n' "${out}"
+                    return 0
                   }
 
                   show_failure_diagnostics() {
@@ -484,11 +484,15 @@ jobs:
                       --output table || true
                     echo ""
                     echo "Nested stacks (events with FAILED + recent tail):"
-                    for NESTED in $(aws_cf cloudformation describe-stack-resources \
+                    NESTED_STACKS=""
+                    if aws_cf cloudformation describe-stack-resources \
                       --stack-name "${STACK_NAME}" \
                       --region "${AWS_REGION}" \
                       --query "StackResources[?ResourceType=='AWS::CloudFormation::Stack'].PhysicalResourceId" \
-                      --output text 2>/dev/null); do
+                      --output text; then
+                      NESTED_STACKS="${AWS_CF_OUT:-}"
+                    fi
+                    for NESTED in ${NESTED_STACKS}; do
                       [ -z "${NESTED}" ] && continue
                       echo "--- ${NESTED} ---"
                       aws_cf cloudformation describe-stack-events \
@@ -506,7 +510,8 @@ jobs:
                   }
 
                   echo "Creating CloudFormation change set ${CHANGE_SET_NAME}..."
-                  CS_OUT=$(aws_cf cloudformation create-change-set \
+                  set +e
+                  aws_cf cloudformation create-change-set \
                     --stack-name "${STACK_NAME}" \
                     --change-set-name "${CHANGE_SET_NAME}" \
                     --change-set-type UPDATE \
@@ -520,46 +525,52 @@ jobs:
                       ParameterKey=TemplatesBucketName,ParameterValue="${{ steps.artifacts-bucket.outputs.bucket_name }}" \
                       ParameterKey=ECRRepositoryUri,ParameterValue="${{ steps.ecr-repo.outputs.repository_uri }}" \
                     --capabilities CAPABILITY_IAM \
-                    --region "${AWS_REGION}" 2>&1) || {
-                      if echo "${CS_OUT}" | grep -q 'does not exist'; then
-                        echo "Stack does not exist yet; creating change set as CREATE."
-                        aws_cf cloudformation create-change-set \
-                          --stack-name "${STACK_NAME}" \
-                          --change-set-name "${CHANGE_SET_NAME}" \
-                          --change-set-type CREATE \
-                          --template-body file://infrastructure/cloudformation/main.yml \
-                          --parameters \
-                            ParameterKey=ProjectName,ParameterValue="${PROJECT_NAME}" \
-                            ParameterKey=HostedZoneId,ParameterValue="${HOSTED_ZONE_ID}" \
-                            ParameterKey=FrontendDomain,ParameterValue="${FRONTEND_DOMAIN}" \
-                            ParameterKey=BackendDomain,ParameterValue="${BACKEND_DOMAIN}" \
-                            ParameterKey=BaseDomain,ParameterValue="${BASE_DOMAIN}" \
-                            ParameterKey=TemplatesBucketName,ParameterValue="${{ steps.artifacts-bucket.outputs.bucket_name }}" \
-                            ParameterKey=ECRRepositoryUri,ParameterValue="${{ steps.ecr-repo.outputs.repository_uri }}" \
-                          --capabilities CAPABILITY_IAM \
-                          --region "${AWS_REGION}" >/dev/null
-                      else
-                        echo "${CS_OUT}"
-                        show_failure_diagnostics
-                        exit 1
-                      fi
-                    }
+                    --region "${AWS_REGION}"
+                  CS_RC=$?
+                  set -e
+                  if [ "${CS_RC}" -ne 0 ]; then
+                    CS_OUT="${AWS_CF_OUT:-}"
+                    if echo "${CS_OUT}" | grep -q 'does not exist'; then
+                      echo "Stack does not exist yet; creating change set as CREATE."
+                      aws_cf cloudformation create-change-set \
+                        --stack-name "${STACK_NAME}" \
+                        --change-set-name "${CHANGE_SET_NAME}" \
+                        --change-set-type CREATE \
+                        --template-body file://infrastructure/cloudformation/main.yml \
+                        --parameters \
+                          ParameterKey=ProjectName,ParameterValue="${PROJECT_NAME}" \
+                          ParameterKey=HostedZoneId,ParameterValue="${HOSTED_ZONE_ID}" \
+                          ParameterKey=FrontendDomain,ParameterValue="${FRONTEND_DOMAIN}" \
+                          ParameterKey=BackendDomain,ParameterValue="${BACKEND_DOMAIN}" \
+                          ParameterKey=BaseDomain,ParameterValue="${BASE_DOMAIN}" \
+                          ParameterKey=TemplatesBucketName,ParameterValue="${{ steps.artifacts-bucket.outputs.bucket_name }}" \
+                          ParameterKey=ECRRepositoryUri,ParameterValue="${{ steps.ecr-repo.outputs.repository_uri }}" \
+                        --capabilities CAPABILITY_IAM \
+                        --region "${AWS_REGION}" >/dev/null
+                    else
+                      echo "${CS_OUT}"
+                      show_failure_diagnostics
+                      exit 1
+                    fi
+                  fi
 
                   round=0
                   while true; do
                     round=$((round + 1))
-                    CS_STATUS=$(aws_cf cloudformation describe-change-set \
+                    aws_cf cloudformation describe-change-set \
                       --stack-name "${STACK_NAME}" \
                       --change-set-name "${CHANGE_SET_NAME}" \
                       --region "${AWS_REGION}" \
                       --query 'Status' \
-                      --output text)
-                    CS_REASON=$(aws_cf cloudformation describe-change-set \
+                      --output text
+                    CS_STATUS="${AWS_CF_OUT}"
+                    aws_cf cloudformation describe-change-set \
                       --stack-name "${STACK_NAME}" \
                       --change-set-name "${CHANGE_SET_NAME}" \
                       --region "${AWS_REGION}" \
                       --query 'StatusReason' \
-                      --output text)
+                      --output text
+                    CS_REASON="${AWS_CF_OUT}"
                     case "${CS_STATUS}" in
                       CREATE_COMPLETE)
                         echo "Change set ready."
@@ -602,18 +613,19 @@ jobs:
                   round=0
                   while true; do
                     round=$((round + 1))
-                    STATUS=$(aws_cf cloudformation describe-stacks \
+                    aws_cf cloudformation describe-stacks \
                       --stack-name "${STACK_NAME}" \
                       --region "${AWS_REGION}" \
                       --query 'Stacks[0].StackStatus' \
-                      --output text)
+                      --output text
+                    STATUS="${AWS_CF_OUT}"
                     case "${STATUS}" in
                       *IN_PROGRESS)
                         if [ "${round}" -eq 1 ] || [ $((round % 5)) -eq 0 ]; then
                           echo "Deploy status: ${STATUS} — waited $((round * WAIT_SEC / 60))m (${round})"
                         fi
                         if [ "${round}" -ge "${MAX_WAIT_ROUNDS}" ]; then
-                          echo "::error::Timed out waiting for stack deploy completion."
+                          echo "::error::Timed out waiting for stack deploy completion (4h). This is usually ACM certificate DNS validation or a stuck nested create."
                           show_failure_diagnostics
                           exit 1
                         fi
