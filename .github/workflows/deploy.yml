@@ -116,6 +116,59 @@ jobs:
               run: |
                   pip install boto3 awscli
 
+            - name: Preflight DNS and hosted zone alignment
+              run: |
+                  set -euo pipefail
+                  norm() {
+                    # Lowercase + strip trailing dot for stable DNS comparisons
+                    echo "$1" | tr '[:upper:]' '[:lower:]' | sed 's/\.$//'
+                  }
+
+                  BASE_DOMAIN_NORM=$(norm "${BASE_DOMAIN}")
+                  BACKEND_FQDN="${BACKEND_DOMAIN}.${BASE_DOMAIN}"
+                  BACKEND_FQDN_NORM=$(norm "${BACKEND_FQDN}")
+
+                  HZ_NAME_RAW=$(aws route53 get-hosted-zone \
+                    --id "${HOSTED_ZONE_ID}" \
+                    --query 'HostedZone.Name' \
+                    --output text)
+                  HZ_NAME_NORM=$(norm "${HZ_NAME_RAW}")
+
+                  if [ "${HZ_NAME_NORM}" != "${BASE_DOMAIN_NORM}" ] && [[ ! "${BACKEND_FQDN_NORM}" =~ \.${HZ_NAME_NORM}$ ]]; then
+                    echo "::error::HostedZoneId ${HOSTED_ZONE_ID} is for '${HZ_NAME_RAW}', which does not match BaseDomain '${BASE_DOMAIN}'."
+                    echo "::error::Use the hosted zone that is authoritative for ${BASE_DOMAIN} (or for a parent zone containing ${BACKEND_FQDN})."
+                    exit 1
+                  fi
+
+                  mapfile -t ZONE_NS < <(aws route53 get-hosted-zone \
+                    --id "${HOSTED_ZONE_ID}" \
+                    --query 'DelegationSet.NameServers' \
+                    --output text | tr '\t' '\n' | sed '/^\s*$/d' | while read -r ns; do norm "$ns"; done)
+
+                  mapfile -t PUBLIC_NS < <(dig +short NS "${BASE_DOMAIN}" | sed '/^\s*$/d' | while read -r ns; do norm "$ns"; done)
+
+                  if [ "${#PUBLIC_NS[@]}" -eq 0 ]; then
+                    echo "::warning::Could not resolve public NS for ${BASE_DOMAIN}. DNS may still be propagating."
+                  else
+                    MATCH=0
+                    for p in "${PUBLIC_NS[@]}"; do
+                      for z in "${ZONE_NS[@]}"; do
+                        if [ "${p}" = "${z}" ]; then
+                          MATCH=1
+                        fi
+                      done
+                    done
+                    if [ "${MATCH}" -ne 1 ]; then
+                      echo "::error::Route53 zone ${HOSTED_ZONE_ID} is not publicly authoritative for ${BASE_DOMAIN}."
+                      echo "::error::Public NS for ${BASE_DOMAIN}: ${PUBLIC_NS[*]}"
+                      echo "::error::Route53 NS for zone ${HZ_NAME_RAW}: ${ZONE_NS[*]}"
+                      echo "::error::Update your registrar/domain DNS to use the Route53 NS above, or supply the correct HostedZoneId."
+                      exit 1
+                    fi
+                  fi
+
+                  echo "DNS preflight passed for HostedZoneId ${HOSTED_ZONE_ID} and BaseDomain ${BASE_DOMAIN}."
+
             - name: Create or verify artifacts bucket
               id: artifacts-bucket
               run: |
